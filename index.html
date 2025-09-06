@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Portfolio — Images Only</title>
+  <style>
+    /* 완전 흰 배경, 여백 없음 */
+    html,body{height:100%}
+    body{margin:0; background:#fff; color:#111; font:16px/1.6 system-ui,"Noto Sans KR",sans-serif}
+    /* 이미지만 크게 중앙에 */
+    .img-wrap{max-width:1600px; width:92vw; margin:48px auto}
+    .img-wrap img{display:block; width:100%; height:auto}
+    /* 로딩 상태(필요시) */
+    .loading{font-size:12px; color:#888; text-align:center; margin:24px 0}
+  </style>
+</head>
+<body>
+
+  <div id="root"></div>
+
+  <script>
+    // ⬇ 여기를 네 값으로 바꾸세요
+    const FOLDER_ID = "16gMlYIDC3q95nhb1GhS-cNYkgRBBJPeu"; // 드라이브 폴더 ID
+    const API_KEY   = "AIzaSyCev_s9YpQIJvJlBRNkNpRFrDsSpxsZXnQ";           // Google Cloud API Key (HTTP referrer 제한 권장)
+    // ⬆
+
+    // Drive API endpoints
+    const DRIVE_LIST = "https://www.googleapis.com/drive/v3/files";
+    const DRIVE_IMG  = (id) => `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${API_KEY}`;
+    const DRIVE_VIEW = (id) => `https://drive.google.com/uc?export=view&id=${id}`;
+
+    // 폴더 내 PNG/JPEG만 조회 (PSD 제외)
+    async function listImages(folderId, pageToken=null) {
+      const params = new URLSearchParams({
+        q: `'${folderId}' in parents and trashed=false and (mimeType='image/png' or mimeType='image/jpeg')`,
+        pageSize: "1000",
+        fields: "nextPageToken, files(id,name,modifiedTime,size,mimeType)",
+        key: API_KEY,
+        // 공유드라이브일 경우 아래 둘도 같이 쓰면 좋아요
+        // includeItemsFromAllDrives: "true",
+        // supportsAllDrives: "true"
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+
+      const res = await fetch(`${DRIVE_LIST}?${params.toString()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`files.list 실패: ${res.status} ${await res.text()}`);
+      return res.json();
+    }
+
+    async function listAll(folderId) {
+      let all = [], token = null;
+      do {
+        const data = await listImages(folderId, token);
+        all = all.concat(data.files || []);
+        token = data.nextPageToken || null;
+      } while (token);
+      return all;
+    }
+
+    // Lazy load (IntersectionObserver)
+    function lazyImg(src, alt, href) {
+      const wrap = document.createElement('div');
+      wrap.className = 'img-wrap';
+
+      const a = document.createElement('a');
+      a.href = href;     // 큰 원본 보기(구글 뷰어)
+      a.target = '_blank';
+      a.rel = 'noopener';
+
+      const img = document.createElement('img');
+      img.alt = alt || '';
+
+      const ph = document.createElement('div');
+      ph.className = 'loading';
+      ph.textContent = 'Loading image…';
+
+      a.appendChild(img);
+      wrap.appendChild(a);
+      wrap.appendChild(ph);
+
+      const io = new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            img.src = src; // 실제 로드
+            img.addEventListener('load', () => ph.remove());
+            img.addEventListener('error', () => { ph.textContent = '이미지 로드 실패'; });
+            io.disconnect();
+          }
+        });
+      }, { rootMargin: '800px 0px' });
+      io.observe(wrap);
+
+      return wrap;
+    }
+
+    async function main() {
+      if (location.protocol === 'file:') {
+        alert('file://로 열면 API Key 제한에 걸릴 수 있어요. 간이 서버로 열어주세요 (예: python3 -m http.server).');
+      }
+      const root = document.getElementById('root');
+      root.innerHTML = '';
+
+      try {
+        let files = await listAll(FOLDER_ID);
+        // 원하면 정렬 기준 바꾸기: 이름/날짜/사이즈 등
+        files.sort((a,b)=> (a.name||'').localeCompare(b.name||'', 'en', {numeric:true}));
+
+        if (files.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'loading';
+          empty.textContent = '표시할 PNG/JPG가 없습니다. (공유 설정도 확인하세요)';
+          root.appendChild(empty);
+          return;
+        }
+
+        for (const f of files) {
+          // <img src>는 API의 alt=media로 — 확실히 원본 바이트 반환
+          const src  = DRIVE_IMG(f.id);
+          const href = DRIVE_VIEW(f.id); // 클릭 시 구글 뷰어로 원본 보기
+          root.appendChild(lazyImg(src, f.name, href));
+        }
+      } catch (e) {
+        const err = document.createElement('div');
+        err.className = 'loading';
+        err.textContent = '로딩 오류: ' + e.message;
+        root.appendChild(err);
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
